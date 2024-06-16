@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>ComfyUI Image Generator</title>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+</head>
+<body>
+    <h1>ComfyUI Image Generator</h1>
+    <input type="file" id="upload-flow-json" accept=".json">
+    <div id="image-result"></div>
+    <script>
+        $(document).ready(function() {
+            const server_address = '127.0.0.1:8188'; // Update this with your server's address and port
+
+            // Generate a unique client ID
+            function uuidv4() {
+                return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
+                    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+                );
+            }
+
+            const client_id = uuidv4();
+
+            // Function to connect to WebSocket, send prompt, and receive the image address
+            function generate(prompt, client_id) {
+                return new Promise((resolve, reject) => {
+                    const socket = new WebSocket('ws://' + server_address + '/ws?clientId=' + client_id);
+
+                    // Handle incoming messages
+                    socket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        console.log('Received WebSocket message:', data);
+
+                        // If the image has been generated, resolve the promise with the image address
+                        if (data.type === 'executed' && 'images' in data.data.output) {
+                            const image = data.data.output.images[0];
+                            const filename = image.filename;
+                            const subfolder = image.subfolder;
+                            const rand = Math.random();
+                            const imageAddress = 'http://' + server_address + '/view?filename=' + filename + '&type=output&subfolder=' + subfolder + '&rand=' + rand;
+                            resolve(imageAddress);
+                            socket.close();
+                        }
+                    };
+
+                    // Handle WebSocket errors
+                    socket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        reject(error);
+                        socket.close();
+                    };
+
+                    // Send the prompt data to the server via HTTP POST
+                    fetch('http://' + server_address + '/prompt', {
+                        method: 'POST',
+                        cache: 'no-cache',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ prompt: prompt, client_id: client_id })
+                    }).catch((error) => {
+                        console.error('Fetch error:', error);
+                        reject(error);
+                        socket.close();
+                    });
+                });
+            }
+
+            // Handle file upload and read the content of the JSON file
+            $('#upload-flow-json').on('change', function(event) {
+                const file = event.target.files[0];
+                const reader = new FileReader();
+
+                reader.onload = async function(event) {
+                    const flowJson = JSON.parse(event.target.result);
+                    try {
+                        const imageAddress = await generate(flowJson, client_id);
+                        console.log('Generated image address:', imageAddress);
+                        $('#image-result').html(`<img src="${imageAddress}" alt="Generated Image">`);
+                    } catch (error) {
+                        console.error('Error generating image:', error);
+                    }
+                };
+
+                reader.onerror = function(error) {
+                    console.error('Error reading JSON file:', error);
+                };
+
+                if (file) {
+                    reader.readAsText(file);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
